@@ -1,4 +1,9 @@
-# my mmdet project
+# csy mmdet project
+
+### content
+- projects/csy_efficientad
+- projects/csy_segad
+- INTEGRATION_GUIDE.md
 
 ### Begin
 - rm -rf .git 
