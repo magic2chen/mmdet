@@ -8,7 +8,7 @@ model = dict(
     model_size='medium',
     out_channels=384,
     teacher_checkpoint=(
-        '/home/ubuntu22/PycharmProjects/PythonProject/mmdetection/checkpoints/efficientad/models/teacher_medium.pth'),
+        '/mnt/d/csy/mmdet/ck4efficientad/models/teacher_medium.pth'),
     teacher_stats_momentum=0.01,
     quantile=0.999,
     lambda_penalty=1.0,
@@ -17,7 +17,7 @@ model = dict(
 )
 
 image_size = 256
-dataset_root = ('/home/ubuntu22/PycharmProjects/PythonProject/mmdetection/Data/dianziyan/100K_dataset')
+dataset_root = '/mnt/d/csy/mmdet/ck4efficientad'
 
 train_dataloader = dict(
     batch_size=1,
@@ -28,7 +28,7 @@ train_dataloader = dict(
         type='EfficientADDataset',
         root=dataset_root,
         dataset_type='mvtec_ad',
-        subdataset='dianziyan',
+        subdataset='bottle',
         split='train',
         image_size=image_size,
         imagenet_train_path='none',
@@ -45,7 +45,7 @@ val_dataloader = dict(
         type='EfficientADDataset',
         root=dataset_root,
         dataset_type='mvtec_ad',
-        subdataset='dianziyan',
+        subdataset='bottle',
         split='val',
         image_size=image_size,
     ),
@@ -60,7 +60,7 @@ test_dataloader = dict(
         type='EfficientADDataset',
         root=dataset_root,
         dataset_type='mvtec_ad',
-        subdataset='dianziyan',
+        subdataset='bottle',
         split='test',
         image_size=image_size,
     ),
@@ -73,8 +73,8 @@ val_evaluator = dict(
 
 test_evaluator = dict(
     type='AnomalyMetric',
-    save_dir='/home/ubuntu22/PycharmProjects/PythonProject/mmdetection/work_dirs/efficientad_small/output_anomaly_maps/dianziyan',
-    data_root='/home/ubuntu22/PycharmProjects/PythonProject/mmdetection/Data/dianziyan/100K_dataset',
+    save_dir='/mnt/d/csy/mmdet/work_dirs/efficientad_small/output_anomaly_maps/bottle',
+    data_root='/mnt/d/csy/mmdet/ck4efficientad',
     save_format='npy'
 )
 
@@ -122,9 +122,26 @@ default_hooks = dict(
 #         type='EfficientADSaveHook',
 #         output_dir='./output',  # Base output directory
 #         Data='mvtec_ad',  # Dataset name
-#         subdataset='dianziyan',  # Sub-Data name
+#         subdataset='bottle',  # Sub-Data name
 #         interval=1000,  # Save every 1000 iterations (as in original)
 #     ),
 # ]
 
 log_processor = dict(type='LogProcessor', window_size=50, by_epoch=False)
+
+# Data preprocessor for inference
+data_preprocessor = dict(
+    type='DetDataPreprocessor',
+    mean=[123.675, 116.28, 103.53],
+    std=[58.395, 57.12, 57.375],
+    bgr_to_rgb=True,
+    pad_size_divisor=32)
+
+# Pipeline for testing/deployment
+test_pipeline = [
+    dict(type='LoadImageFromFile', backend_args=None),
+    dict(type='Resize', scale=(256, 256), keep_ratio=False),
+    dict(type='Normalize', mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375]),
+    dict(type='Pad', size_divisor=32),
+    dict(type='PackDetInputs', meta_keys=['img_id', 'img_path', 'ori_shape', 'img_shape', 'scale_factor'])
+]

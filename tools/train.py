@@ -59,6 +59,27 @@ def parse_args():
     return args
 
 
+def _propagate_defect_types(cfg):
+    """Copy top-level ``cfg.defect_types`` into all 3 dataloaders' datasets.
+
+    The cfg files declare a top-level ``defect_types`` var (default ``[]``)
+    and capture it by reference inside each ``dataset=dict(...)`` literal,
+    which means ``--cfg-options defect_types="[...]"`` overrides the
+    top-level var AFTER the dataset dicts are already constructed with
+    the old empty list reference. This helper syncs them so the dataset
+    actually receives the subset filter.
+
+    No-op when ``defect_types`` is absent from the cfg.
+    """
+    if 'defect_types' not in cfg:
+        return
+    if not hasattr(cfg, 'train_dataloader'):
+        return
+    for key in ('train_dataloader', 'val_dataloader', 'test_dataloader'):
+        if key in cfg and 'dataset' in cfg[key]:
+            cfg[key].dataset.defect_types = cfg.defect_types
+
+
 def main():
     args = parse_args()
 
@@ -71,6 +92,10 @@ def main():
     cfg.launcher = args.launcher
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
+
+    # Sync top-level defect_types (potentially overridden by --cfg-options)
+    # into train / val / test dataset configs.
+    _propagate_defect_types(cfg)
 
     # work_dir is determined in this priority: CLI > segment in file > filename
     if args.work_dir is not None:
@@ -124,5 +149,7 @@ def main():
 # python tools/train.py projects/csy_efficientad/configs/efficientad_small.py
 # segad:
 # python tools/train.py projects/csy_segad/configs/segad_efficient_ad.py
+# defectfill:
+# python tools/train.py projects\csy_defectfill\configs\defectfill_phone.py
 if __name__ == '__main__':
     main()

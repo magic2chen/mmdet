@@ -144,12 +144,23 @@ def main():
     # start testing
     runner.test()
 
+'''
 # efficientad 推理并保存异常图
-# python tools/test.py projects/csy_efficientad/configs/efficientad_small.py \
-# work_dirs/efficientad_small/iter_70000.pth \
-# --cfg-options test_evaluator.save_dir=output_anomaly_maps/dianziyan \
-# test_evaluator.data_root=/home/ubuntu22/PycharmProjects/PythonProject/EfficientAD-main/Data/100K_dataset \
-# test_evaluator.save_format=npy
+python tools/test.py projects/csy_efficientad/configs/efficientad_small.py \
+work_dirs/efficientad_small/iter_70000.pth \
+--cfg-options test_evaluator.save_dir=output_anomaly_maps/dianziyan \
+test_evaluator.data_root=/home/ubuntu22/PycharmProjects/PythonProject/EfficientAD-main/Data/100K_dataset \
+test_evaluator.save_format=npy
+
+
+# defectfill
+python tools/test.py \
+    projects/csy_defectfill/configs/defectfill_phone.py \
+    work_dirs/defectfill_phone——v2/iter_40000.pth \
+    --work-dir work_dirs/defectfill_phone/test_20000 \
+    --out work_dirs/defectfill_phone/test_20000/results.pkl \
+
+'''
 
 # xxxx
 if __name__ == '__main__':

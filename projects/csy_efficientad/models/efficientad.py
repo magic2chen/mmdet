@@ -129,7 +129,9 @@ class EfficientADModel(BaseModule):
                  lambda_penalty: float = 1.0,
                  lambda_ae: float = 1.0,
                  lambda_stae: float = 1.0,
+                 data_preprocessor: Optional[Dict] = None,
                  init_cfg: Optional[Dict] = None) -> None:
+        # data_preprocessor is handled by mmdeploy pipeline, not by BaseModule
         super().__init__(init_cfg=init_cfg)
         self.model_size = model_size
         self.out_channels = out_channels
@@ -187,6 +189,12 @@ class EfficientADModel(BaseModule):
         return (teacher_output - self.teacher_mean) / (self.teacher_std + eps)
 
     def _forward_maps(self, image: Tensor) -> Tuple[Tensor, Tensor]:
+        # Ensure 4D input (B, C, H, W)
+        if image.dim() == 3:
+            image = image.unsqueeze(0)
+        elif image.dim() == 2:
+            image = image.unsqueeze(0).unsqueeze(0)
+
         teacher_output = self.teacher(image)
         teacher_output = self._normalise_teacher(teacher_output)
 
@@ -329,7 +337,30 @@ class EfficientADModel(BaseModule):
                 ))
         return results
 
-    def forward(self, *args, **kwargs):
-        raise NotImplementedError(
-            'EfficientADModel does not support direct forwarding; '
-            'use train_step/val_step/test_step instead.')
+    def forward(self, img: Tensor, data_samples=None, **kwargs) -> Tensor:
+        """Forward for inference. Returns combined anomaly map.
+
+        Args:
+            img: Input image tensor of shape (B, 3, H, W)
+            data_samples: Optional, ignored (for mmdeploy compatibility)
+
+        Returns:
+            Combined anomaly map of shape (B, 1, H, W)
+        """
+        map_st, map_ae = self._forward_maps(img)
+        return map_st + map_ae
+
+    def forward_export(self, img: Tensor) -> Tensor:
+        """Export-friendly forward - returns single combined anomaly map.
+
+        This method combines map_st and map_ae by summing, providing a single
+        anomaly score map for ONNX export.
+
+        Args:
+            img: Input image tensor of shape (B, 3, H, W)
+
+        Returns:
+            Combined anomaly map of shape (B, 1, H, W)
+        """
+        map_st, map_ae = self._forward_maps(img)
+        return map_st + map_ae

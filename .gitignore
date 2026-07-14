@@ -127,3 +127,10 @@ Data/
 
 # DefectFill project
 DefectFill/
+DefectFill2/
+
+# ck
+ck4efficientad/
+deploy_efficientad/
+deploy_efficientad_trt/
+

@@ -1,6 +1,67 @@
 # EfficientAD for MMDetection
 
-本项目将 EfficientAD 集成到 MMDetection 框架中，支持使用标准的 `tools/train.py` 和 `tools/test.py` 脚本进行训练和推理。
+本项目将 EfficientAD 集成到 MMDetection 框架中，支持使用标准的 `tools/train.py` 和 `tools/test.py` 脚本进行训练和推理，同时支持通过 mmdeploy 进行 ONNX 和 TensorRT 部署。
+
+## 目录
+
+- [环境要求](#环境要求)
+- [训练](#训练)
+- [推理测试](#推理测试)
+- [ONNX 部署](#onnx-部署)
+- [TensorRT 部署](#tensorrt-部署)
+- [配置文件说明](#配置文件说明)
+
+## 环境要求
+
+### 基础环境
+
+```bash
+# 建议使用 conda 环境
+conda create -n mmlab python=3.10
+conda activate mmlab
+
+# 安装 PyTorch (CUDA 12.1)
+pip install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu121
+
+# 安装 MMDetection 和相关依赖
+pip install mmdet==3.3.0 mmengine==0.10.0 mmcv==2.1.0
+
+# 安装 OpenMMLab 其他依赖
+pip install openmim
+mim install mmdet mmengine mmcv
+```
+
+### mmdeploy 环境 (用于 ONNX/TensorRT 部署)
+
+```bash
+# 创建独立环境
+conda create -n trt_export python=3.10
+conda activate trt_export
+
+# 安装 TensorRT (根据你的 CUDA 版本选择)
+# CUDA 12.x:
+pip install tensorrt-cu12
+
+# 安装 mmdeploy
+cd mmdeploy
+pip install -e .
+
+# 验证安装
+python -c "import mmdeploy; print(mmdeploy.__version__)"
+```
+
+### 预训练模型
+
+需要下载 EfficientAD 的预训练 teacher 模型：
+
+```bash
+# 放置在 ck4efficientad/models/ 目录下
+ck4efficientad/models/
+├── teacher_small.pth   # small 版本 teacher
+└── teacher_medium.pth  # medium 版本 teacher
+```
+
+## 训练
 
 ## Checkpoint 保存策略
 
@@ -259,4 +320,324 @@ python tools/test.py \
     --cfg-options test_dataloader.Data.subdataset=cable \
                    test_evaluator.save_dir=output_anomaly_maps/cable
 ```
+
+---
+
+## ONNX 部署
+
+### 使用 mmdeploy 导出 ONNX
+
+需要使用 `torch2onnx.py` 脚本和 `mmanomaly` 配置：
+
+```bash
+# 切换到 trt_export 环境
+conda activate trt_export
+
+# 导出 ONNX
+python mmdeploy/tools/torch2onnx.py \
+    mmdeploy/configs/mmanomaly/anomaly_detection_onnxruntime_dynamic.py \
+    projects/csy_efficientad/configs/efficientad_small.py \
+    work_dirs/efficientad_small/iter_30000.pth \
+    ck4efficientad/bottle/test/good/000.png \
+    --work-dir ./deploy_efficientad \
+    --device cuda:0
+```
+
+### 验证 ONNX 模型
+
+```bash
+python -c "
+import onnx
+
+model = onnx.load('deploy_efficientad/end2end.onnx')
+print('Inputs:')
+for i, inp in enumerate(model.graph.input):
+    print(f'  {inp.name}: {[d.dim_value for d in inp.type.tensor_type.shape.dim]}')
+print('Outputs:')
+for i, out in enumerate(model.graph.output):
+    print(f'  {out.name}')
+"
+```
+
+输出示例：
+```
+Inputs:
+  input: [0, 3, 256, 256]
+Outputs:
+  anomaly_map
+```
+
+### ONNX Runtime 推理测试
+
+```bash
+python -c "
+import onnxruntime as ort
+import numpy as np
+
+sess = ort.InferenceSession('deploy_efficientad/end2end.onnx', providers=['CUDAExecutionProvider'])
+input_name = sess.get_inputs()[0].name
+output_name = sess.get_outputs()[0].name
+
+# 准备输入 (1, 3, 256, 256)
+img = np.random.randn(1, 3, 256, 256).astype(np.float32)
+output = sess.run([output_name], {input_name: img})[0]
+print(f'Output shape: {output.shape}')
+"
+```
+
+---
+
+## TensorRT 部署
+
+### 配置文件
+
+已创建专门的 TensorRT 配置文件：
+
+- `mmdeploy/configs/efficientad/efficientad_tensorrt_static.py`
+
+### 使用 mmdeploy 导出 TensorRT
+
+```bash
+# 切换到 trt_export 环境
+conda activate trt_export
+
+# 导出 TensorRT (同时生成 ONNX 和 engine)
+python mmdeploy/tools/deploy.py \
+    mmdeploy/configs/efficientad/efficientad_tensorrt_static.py \
+    projects/csy_efficientad/configs/efficientad_small.py \
+    work_dirs/efficientad_small/iter_30000.pth \
+    ck4efficientad/bottle/test/good/000.png \
+    --work-dir ./deploy_efficientad_trt \
+    --device cuda
+```
+
+### 输出文件
+
+```
+deploy_efficientad_trt/
+├── end2end.onnx       # ONNX 模型 (83MB)
+└── end2end.engine     # TensorRT Engine (43MB)
+```
+
+### TensorRT 推理测试
+
+运行时需要设置 cuDNN 库路径：
+
+```bash
+# 设置库路径 (根据实际安装位置调整)
+export LD_LIBRARY_PATH=/home/csy/miniconda3/envs/trt_export/lib/python3.10/site-packages/nvidia/cudnn/lib:$LD_LIBRARY_PATH
+
+# 验证 engine
+python -c "
+import tensorrt as trt
+
+with open('./deploy_efficientad_trt/end2end.engine', 'rb') as f:
+    engine_data = f.read()
+
+logger = trt.Logger(trt.Logger.ERROR)
+runtime = trt.Runtime(logger)
+engine = runtime.deserialize_cuda_engine(engine_data)
+
+print(f'Engine created successfully! Tensors: {engine.num_io_tensors}')
+for i in range(engine.num_io_tensors):
+    name = engine.get_tensor_name(i)
+    shape = engine.get_tensor_shape(name)
+    print(f'  {i}: {name} {shape}')
+"
+```
+
+输出示例：
+```
+Engine created successfully! Tensors: 2
+  0: input (-1, 3, 256, 256)
+  1: anomaly_map (-1, 1, 56, 56)
+```
+
+### 完整 TensorRT 推理代码
+
+```bash
+python -c "
+import os
+os.environ['CUDA_MODULE_LOADING'] = 'LAZY'
+
+import numpy as np
+import tensorrt as trt
+import pycuda.driver as cuda
+import pycuda.autoinit
+from PIL import Image
+
+# 加载 engine
+with open('./deploy_efficientad_trt/end2end.engine', 'rb') as f:
+    engine_data = f.read()
+
+logger = trt.Logger(trt.Logger.ERROR)
+runtime = trt.Runtime(logger)
+engine = runtime.deserialize_cuda_engine(engine_data)
+context = engine.create_execution_context()
+
+# 获取 tensor 信息
+input_name = engine.get_tensor_name(0)
+output_name = engine.get_tensor_name(1)
+
+# 分配 GPU 内存
+d_input = cuda.mem_alloc(1 * 3 * 256 * 256 * 4)  # float32
+d_output = cuda.mem_alloc(1 * 1 * 56 * 56 * 4)
+
+# 预处理图像
+def preprocess(img_path):
+    img = Image.open(img_path).convert('RGB').resize((256, 256), Image.BILINEAR)
+    img_np = np.array(img, dtype=np.float32) / 255.0
+    img_np = img_np.transpose(2, 0, 1)[np.newaxis]
+    mean = np.array([0.485, 0.456, 0.406]).reshape(1, 3, 1, 1)
+    std = np.array([0.229, 0.224, 0.225]).reshape(1, 3, 1, 1)
+    return ((img_np - mean) / std).astype(np.float32)
+
+# 运行推理
+def run(img_path):
+    img = preprocess(img_path)
+    cuda.memcpy_htod(d_input, np.ascontiguousarray(img))
+    context.set_input_shape(input_name, (1, 3, 256, 256))
+    context.set_tensor_address(input_name, int(d_input))
+    context.set_tensor_address(output_name, int(d_output))
+    success = context.execute_v2([int(d_input), int(d_output)])
+    if not success:
+        return np.zeros((56, 56), dtype=np.float32)
+    h_out = np.empty((1, 1, 56, 56), dtype=np.float32)
+    cuda.memcpy_dtoh(h_out, int(d_output))
+    return h_out[0, 0]
+
+# 测试
+print('[Normal]')
+r = run('./ck4efficientad/bottle/test/good/000.png')
+print(f'  Score: {r.max():.4f}')
+
+print('[Defective]')
+r = run('./ck4efficientad/bottle/test/broken_large/000.png')
+print(f'  Score: {r.max():.4f}')
+
+print('Done!')
+"
+```
+
+---
+
+## 配置文件说明
+
+### 训练配置
+
+`projects/csy_efficientad/configs/efficientad_small.py` 主要参数：
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `model_size` | 模型大小，可选 `small` 或 `medium` | `small` |
+| `out_channels` | 输出通道数 | `384` |
+| `teacher_checkpoint` | 预训练 teacher 模型路径 | - |
+| `teacher_stats_momentum` | teacher 统计更新动量 | `0.01` |
+| `quantile` | 硬样本分位数 | `0.999` |
+| `lambda_penalty` | 惩罚项权重 | `1.0` |
+| `lambda_ae` | 自编码器损失权重 | `1.0` |
+| `lambda_stae` | STAE 损失权重 | `1.0` |
+
+### 数据集配置
+
+| 参数 | 说明 |
+|------|------|
+| `dataset_root` | MVTec AD 数据集根目录 |
+| `dataset_type` | 数据集类型，`mvtec_ad` 或 `mvtec_loco` |
+| `subdataset` | 子数据集名称，如 `bottle`, `cable` 等 |
+| `split` | 数据划分，`train`, `val` 或 `test` |
+| `image_size` | 输入图像大小 | `256` |
+
+### 部署配置文件说明
+
+#### ONNX 部署配置
+
+使用 `mmdeploy/configs/mmanomaly/anomaly_detection_onnxruntime_dynamic.py`，关键配置：
+
+```python
+onnx_config = dict(
+    input_names=['input'],
+    output_names=['anomaly_map'],
+    dynamic_axes={...},  # 支持动态 batch
+)
+codebase_config = dict(
+    type='mmanomaly',   # 使用 mmanomaly，不是 mmdet
+    task='AnomalyDetection',
+)
+backend_config = dict(type='onnxruntime')
+```
+
+#### TensorRT 部署配置
+
+使用 `mmdeploy/configs/efficientad/efficientad_tensorrt_static.py`：
+
+```python
+onnx_config = dict(
+    type='onnx',
+    input_names=['input'],
+    output_names=['anomaly_map'],
+    save_file='end2end.onnx',
+    dynamic_axes={
+        'input': {0: 'batch'},      # 只支持 batch 动态
+        'anomaly_map': {0: 'batch'},
+    },
+)
+
+codebase_config = dict(
+    type='mmanomaly',
+    task='AnomalyDetection',
+)
+
+backend_config = dict(
+    type='tensorrt',
+    common_config=dict(
+        max_workspace_size=1 << 30,  # 1GB workspace
+        fp16_mode=True,               # 启用 FP16
+    ),
+    model_inputs=[
+        dict(
+            input_shapes=dict(
+                input=dict(
+                    min_shape=[1, 3, 256, 256],
+                    opt_shape=[1, 3, 256, 256],
+                    max_shape=[4, 3, 256, 256])))
+    ],
+)
+```
+
+#### 配置关键字段说明
+
+| 字段 | 说明 |
+|------|------|
+| `onnx_config.type` | 必须是 `'onnx'` 才能被 mmdeploy 识别 |
+| `onnx_config.save_file` | ONNX 文件保存名 |
+| `codebase_config.type` | 使用 `'mmanomaly'`（异常检测任务） |
+| `backend_config.type` | 后端类型，`'tensorrt'` 或 `'onnxruntime'` |
+| `backend_config.common_config.fp16_mode` | 是否启用 FP16 加速 |
+| `backend_config.model_inputs` | TensorRT 优化 profile 配置 |
+
+---
+
+## 常见问题
+
+### 1. TensorRT 转换失败：Dynamic shape axis 错误
+
+确保使用正确的配置文件和导出顺序：
+1. 先用 `torch2onnx.py` + `mmanomaly` 配置导出 ONNX
+2. 再用 `deploy.py` + `efficientad_tensorrt_static.py` 转换 TensorRT
+
+### 2. TensorRT 运行时找不到 libcudnn
+
+运行时需要设置 LD_LIBRARY_PATH：
+```bash
+export LD_LIBRARY_PATH=/path/to/cudnn/lib:$LD_LIBRARY_PATH
+```
+
+### 3. ONNX 导出时模型输出维度错误
+
+如果模型 forward 返回 tuple，mmdeploy 导出会有问题。已修改 `forward` 方法返回单个 `anomaly_map`（`map_st + map_ae`）。
+
+### 4. mmdeploy 找不到 codebase
+
+使用 `mmanomaly` 配置时，`codebase_config` 的 `type` 应为 `mmanomaly`，不是 `mmdet`。
 
