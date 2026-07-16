@@ -28,11 +28,12 @@ from ..models import SegADModel
 # }
 
 CATEGORIES = (
-    "dianziyan"
+    "dianziyan", "bottle"
 )
 
 NUM_COMPONENTS = {
-    "dianziyan": 2
+    "dianziyan": 2,
+    "bottle": 1
 }
 
 # Seeds to reproduce results from the paper
