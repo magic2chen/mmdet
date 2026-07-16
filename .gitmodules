@@ -1,0 +1,3 @@
+[submodule "mmdeploy"]
+	path = mmdeploy
+	url = https://github.com/magic2chen/csy_mmdeploy.git
